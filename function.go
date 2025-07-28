@@ -210,16 +210,15 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		}
 
 		chunk := dataRows[start:end]
+
 		workflowPayload := map[string]interface{}{
 			"body": map[string]interface{}{ // Wrap the data within a "body" key
 				"valueRanges": []interface{}{
 					map[string]interface{}{
-						"values": [][]interface{}{}, // Initialize the values array
+						"values": chunk, // Initialize the values array
 					},
 				},
 			},
-		}
-				},
 			},
 		}
 
@@ -256,7 +255,7 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		for err := range executionErrors {
 			errorMessages = append(errorMessages, err.Error())
 		}
-		log.Printf("Completed with %d errors: %v", len(errorMessages), errorMessages)
+		log.Printf("Completed with %d errors: %v", len(executionErrors), errorMessages)
 		http.Error(w, fmt.Sprintf("Completed with %d errors.", len(errorMessages)), http.StatusInternalServerError)
 		return
 	}
