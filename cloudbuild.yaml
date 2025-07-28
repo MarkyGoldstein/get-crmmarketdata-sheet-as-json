@@ -1,23 +1,13 @@
 # cloudbuild.yaml
 # This file defines the continuous integration and deployment pipeline for the Go application.
-# It uses Google Cloud Build to compile the Go binary, build a Docker container,
-# and push the container to Google Artifact Registry.
+# It builds a Docker container using a multi-stage Dockerfile and pushes it to Google Artifact Registry.
+# This approach delegates the Go compilation to Docker, which is a robust and standard pattern.
 
 steps:
-  # 1. Build the Go application binary
-  # The 'dir' property explicitly sets the working directory to /workspace,
-  # where the source code is checked out. This ensures the 'go' command
-  # finds the go.mod file correctly, resolving workspace detection issues.
-  - name: 'gcr.io/cloud-builders/go:1.22'
-    args: ['build', '-o', 'app', '.']
-    env: ['CGO_ENABLED=0', 'GOOS=linux', 'GO111MODULE=on']
-    dir: '/workspace'
-    id: 'Build'
-
-  # 2. Build the Docker container image
-  # This step uses the Docker cloud builder to create a container image.
-  # It tags the image with the Artifact Registry path. The tag includes the
-  # short git commit SHA ($SHORT_SHA) for versioning and traceability.
+  # 1. Build and tag the Docker container image
+  # This single step now handles the entire build process, including Go compilation,
+  # as defined in the multi-stage Dockerfile. This avoids issues with the
+  # gcr.io/cloud-builders/go builder's workspace detection.
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
@@ -26,9 +16,9 @@ steps:
       - '.'
     id: 'Build-Image'
 
-  # 3. Push the Docker image to Google Artifact Registry
-  # This step pushes the newly built image to the specified Artifact Registry repository.
-  # This makes the image available for deployment to services like Cloud Run.
+  # 2. Push the Docker image to Google Artifact Registry
+  # This step pushes the final, small image created by the multi-stage Dockerfile
+  # to the specified Artifact Registry repository.
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
