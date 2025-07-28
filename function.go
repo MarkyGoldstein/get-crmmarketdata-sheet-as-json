@@ -197,21 +197,25 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	log.Printf("Attempting to open Google Sheet ID: %s, Name: %s", spreadsheetID, sheetName)
 	// Fetch all data from the sheet
 	resp, err := sheetsService.Spreadsheets.Values.Get(spreadsheetID, sheetName).Do()
 	if err != nil {
-		log.Printf("Unable to retrieve data from sheet: %v", err)
+		// Log a detailed warning if the sheet could not be opened/read.
+		log.Printf("⚠️ Warning: Unable to retrieve data from sheet ID '%s', Name '%s'. Error: %v", spreadsheetID, sheetName, err)
 		http.Error(w, "Failed to retrieve data from Google Sheet.", http.StatusInternalServerError)
 		return
 	}
+	// Log a confirmation message upon successful access.
+	log.Printf("✅ Successfully opened and read data from Google Sheet ID: %s, Name: %s. Found %d total rows.", spreadsheetID, sheetName, len(resp.Values))
 
 	if len(resp.Values) <= 1 { // No data or only a header row
+		log.Println("No data rows to process.")
 		fmt.Fprintln(w, "No data rows to process.")
 		return
 	}
 
 	headerRow := resp.Values[0]
-	// **NEW**: Validate the header for required columns.
 	validateHeader(headerRow)
 
 	dataRows := resp.Values[1:]
