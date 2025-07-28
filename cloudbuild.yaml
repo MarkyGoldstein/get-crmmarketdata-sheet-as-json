@@ -1,13 +1,12 @@
 # cloudbuild.yaml
 # This file defines the continuous integration and deployment pipeline for the Go application.
 # It builds a Docker container using a multi-stage Dockerfile and pushes it to Google Artifact Registry.
-# This approach delegates the Go compilation to Docker, which is a robust and standard pattern.
+# This configuration is set to run the build and store the image in the Zurich, Switzerland region.
 
 steps:
   # 1. Build and tag the Docker container image
   # This single step now handles the entire build process, including Go compilation,
-  # as defined in the multi-stage Dockerfile. This avoids issues with the
-  # gcr.io/cloud-builders/go builder's workspace detection.
+  # as defined in the multi-stage Dockerfile.
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
@@ -18,7 +17,7 @@ steps:
 
   # 2. Push the Docker image to Google Artifact Registry
   # This step pushes the final, small image created by the multi-stage Dockerfile
-  # to the specified Artifact Registry repository.
+  # to the specified Artifact Registry repository in the Zurich region.
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'push'
@@ -30,15 +29,14 @@ images:
   - '${_GCP_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:$SHORT_SHA'
 
 # Define substitution variables. These allow for dynamic configuration at build time.
-# You can override these values when you start a build.
-# _GCP_LOCATION: The GCP region for the Artifact Registry (e.g., 'us-central1').
-# _REPOSITORY: The name of your repository in Artifact Registry.
-# _IMAGE_NAME: The name of the container image.
+# _GCP_LOCATION is now set to the Zurich region.
 substitutions:
-  _GCP_LOCATION: 'us-central1'
-  _REPOSITORY: 'my-app-repo'
+  _GCP_LOCATION: 'europe-west6'
+  _REPOSITORY: 'cloud-run-source-deploy'
   _IMAGE_NAME: 'go-workflow-dispatcher'
 
 options:
-  # Set the logging mode. CLOUD_LOGGING_ONLY sends structured logs to Cloud Logging.
+  # Set the logging mode.
   logging: CLOUD_LOGGING_ONLY
+  # Explicitly set the region where the build job itself will run.
+  region: 'europe-west6'
