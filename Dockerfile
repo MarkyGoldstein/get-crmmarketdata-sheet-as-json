@@ -3,7 +3,7 @@
 # --- Stage 1: Build ---
 # This stage uses a specific version of the Go image to build the application.
 # Using a specific version ensures reproducible builds.
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Set the working directory inside the container.
 WORKDIR /app
