@@ -4,21 +4,27 @@
 # and push the container to Google Artifact Registry.
 
 steps:
-  # 1. Build the Go application binary
-  # This step uses the official Golang cloud builder to compile the application.
-  # The '-o app' flag specifies the output file name.
-  # CGO_ENABLED=0 ensures the binary is statically linked.
-  # GO111MODULE=on forces the builder to use Go modules, resolving workspace issues.
+  # 1. Download Go module dependencies
+  # This step explicitly downloads all the dependencies defined in go.mod
+  # into the module cache. This makes the subsequent build step more reliable.
+  - name: 'gcr.io/cloud-builders/go:1.22'
+    args: ['mod', 'download']
+    env: ['GO111MODULE=on']
+    id: 'Download-Dependencies'
+
+  # 2. Build the Go application binary
+  # This step now builds from the source, using the pre-downloaded dependencies.
+  # It waits for the 'Download-Dependencies' step to complete first.
   - name: 'gcr.io/cloud-builders/go:1.22'
     args: ['build', '-o', 'app', '.']
     env: ['CGO_ENABLED=0', 'GOOS=linux', 'GO111MODULE=on']
     id: 'Build'
+    waitFor: ['Download-Dependencies']
 
-  # 2. Build the Docker container image
+  # 3. Build the Docker container image
   # This step uses the Docker cloud builder to create a container image.
   # It tags the image with the Artifact Registry path. The tag includes the
   # short git commit SHA ($SHORT_SHA) for versioning and traceability.
-  # The '.' indicates that the Dockerfile is in the current directory.
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
@@ -27,7 +33,7 @@ steps:
       - '.'
     id: 'Build-Image'
 
-  # 3. Push the Docker image to Google Artifact Registry
+  # 4. Push the Docker image to Google Artifact Registry
   # This step pushes the newly built image to the specified Artifact Registry repository.
   # This makes the image available for deployment to services like Cloud Run.
   - name: 'gcr.io/cloud-builders/docker'
