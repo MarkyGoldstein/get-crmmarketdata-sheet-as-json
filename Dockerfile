@@ -22,10 +22,10 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -ldflags="-w -s" -o /app/main .
 
 # --- Stage 2: Final Image ---
-# This stage uses a minimal "scratch" image, which contains only the compiled application
-# and nothing else. This is a security best practice as it drastically reduces the
-# attack surface of the container.
-FROM scratch
+# This stage uses a minimal "alpine" image. Unlike "scratch", alpine includes
+# essential libraries and, crucially, the trusted root CA certificates
+# needed for making secure HTTPS (TLS) connections.
+FROM alpine:latest
 
 # Set the working directory.
 WORKDIR /app
