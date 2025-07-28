@@ -166,8 +166,12 @@ func validateHeader(headerRow []interface{}) {
 
 	// Create a set for efficient lookup of existing header columns.
 	headerSet := make(map[string]bool)
+
+	// This new loop safely converts any cell type (number, text, etc.)
+	// to a string and trims whitespace for a reliable comparison.
 	for _, col := range headerRow {
-		if colStr, ok := col.(string); ok {
+		if col != nil {
+			colStr := strings.TrimSpace(fmt.Sprint(col))
 			headerSet[colStr] = true
 		}
 	}
