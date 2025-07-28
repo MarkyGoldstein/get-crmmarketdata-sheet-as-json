@@ -211,14 +211,19 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 
 		chunk := dataRows[start:end]
 
+		// **MODIFIED**: Create a new slice for the payload that includes the header row.
+		// The capacity is set to len(chunk) + 1 for efficiency.
+		payloadRows := make([][]interface{}, 0, len(chunk)+1)
+		payloadRows = append(payloadRows, headerRow)
+		payloadRows = append(payloadRows, chunk...)
+
 		workflowPayload := map[string]interface{}{
-			"body": map[string]interface{}{ // Wrap the data within a "body" key
+			"body": map[string]interface{}{
 				"valueRanges": []interface{}{
 					map[string]interface{}{
-						"values": chunk, // Initialize the values array
+						"values": payloadRows, // Use the slice that includes the header
 					},
 				},
-			},
 			},
 		}
 
