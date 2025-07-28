@@ -1,0 +1,55 @@
+# cloudbuild.yaml
+# This file defines the continuous integration and deployment pipeline for the Go application.
+# It uses Google Cloud Build to compile the Go binary, build a Docker container,
+# and push the container to Google Artifact Registry.
+
+steps:
+  # 1. Build the Go application binary
+  # This step uses the official Golang cloud builder to compile the application.
+  # The '-o app' flag specifies the output file name.
+  # CGO_ENABLED=0 ensures the binary is statically linked, which is a best practice
+  # for creating minimal Docker containers.
+  - name: 'gcr.io/cloud-builders/go:1.22'
+    args: ['build', '-o', 'app', '.']
+    env: ['CGO_ENABLED=0', 'GOOS=linux']
+    id: 'Build'
+
+  # 2. Build the Docker container image
+  # This step uses the Docker cloud builder to create a container image.
+  # It tags the image with the Artifact Registry path. The tag includes the
+  # short git commit SHA ($SHORT_SHA) for versioning and traceability.
+  # The '.' indicates that the Dockerfile is in the current directory.
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - '${_GCP_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:$SHORT_SHA'
+      - '.'
+    id: 'Build-Image'
+
+  # 3. Push the Docker image to Google Artifact Registry
+  # This step pushes the newly built image to the specified Artifact Registry repository.
+  # This makes the image available for deployment to services like Cloud Run.
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '${_GCP_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:$SHORT_SHA'
+    id: 'Push-Image'
+
+# Define the image(s) to be pushed to the registry upon successful build.
+images:
+  - '${_GCP_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:$SHORT_SHA'
+
+# Define substitution variables. These allow for dynamic configuration at build time.
+# You can override these values when you start a build.
+# _GCP_LOCATION: The GCP region for the Artifact Registry (e.g., 'us-central1').
+# _REPOSITORY: The name of your repository in Artifact Registry.
+# _IMAGE_NAME: The name of the container image.
+substitutions:
+  _GCP_LOCATION: 'us-central1'
+  _REPOSITORY: 'my-app-repo'
+  _IMAGE_NAME: 'go-workflow-dispatcher'
+
+options:
+  # Set the logging mode. STRUCTURED provides more detailed and queryable logs.
+  logging: STRUCTURED
