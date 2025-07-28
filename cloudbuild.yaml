@@ -7,11 +7,11 @@ steps:
   # 1. Build the Go application binary
   # This step uses the official Golang cloud builder to compile the application.
   # The '-o app' flag specifies the output file name.
-  # CGO_ENABLED=0 ensures the binary is statically linked, which is a best practice
-  # for creating minimal Docker containers.
+  # CGO_ENABLED=0 ensures the binary is statically linked.
+  # GO111MODULE=on forces the builder to use Go modules, resolving workspace issues.
   - name: 'gcr.io/cloud-builders/go:1.22'
     args: ['build', '-o', 'app', '.']
-    env: ['CGO_ENABLED=0', 'GOOS=linux']
+    env: ['CGO_ENABLED=0', 'GOOS=linux', 'GO111MODULE=on']
     id: 'Build'
 
   # 2. Build the Docker container image
