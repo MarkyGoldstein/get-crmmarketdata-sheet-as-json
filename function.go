@@ -23,14 +23,36 @@ import (
 
 // Global clients and configuration.
 var (
-	sheetsService    *sheets.Service
-	workflowsClient  *workflows.Client
+	sheetsService       *sheets.Service
+	workflowsClient     *workflows.Client
 	secretManagerClient *secretmanager.Client
-	workflowParent   string
-	scope            string // Holds the execution scope ('Test' or 'Prod')
-	chunkSize        int    // Number of rows per workflow execution
-	maxTestBatches   = 2    // Maximum number of batches to process in 'Test' mode
+	workflowParent      string
+	scope               string // Holds the execution scope ('Test' or 'Prod')
+	chunkSize           int    // Number of rows per workflow execution
+	maxTestBatches      = 2    // Maximum number of batches to process in 'Test' mode
 )
+
+// main is the entry point for the application. It sets up the HTTP server.
+// This is required for 2nd Gen Cloud Functions / Cloud Run.
+func main() {
+	// The init() function will be called automatically before main().
+
+	// Register the HTTP handler function.
+	http.HandleFunc("/", DispatchSheetDataToWorkflows)
+
+	// Determine port for HTTP service.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+		log.Printf("Defaulting to port %s", port)
+	}
+
+	// Start HTTP server.
+	log.Printf("Listening on port %s", port)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal(err)
+	}
+}
 
 // init runs once per function instance, initializing clients and configuration.
 func init() {
@@ -52,7 +74,10 @@ func init() {
 	// 3. Fetch the SCOPE from Secret Manager
 	scope, err = getScopeFromSecretManager(ctx, projectID)
 	if err != nil {
-		log.Fatalf("Failed to retrieve SCOPE from Secret Manager: %v", err)
+		// In a serverless environment, failing to get the scope might be critical.
+		// However, we can also default to a safe mode. Here, we'll default to "Test".
+		log.Printf("Warning: Failed to retrieve SCOPE from Secret Manager: %v. Defaulting to 'Test' mode.", err)
+		scope = "Test"
 	}
 	log.Printf("Running in SCOPE: %s", scope)
 
@@ -63,7 +88,6 @@ func init() {
 		chunkSize = 250
 	}
 	log.Printf("Using chunk size: %d", chunkSize)
-
 
 	// 5. Initialize Google Sheets Client
 	sheetsHTTPClient, err := google.DefaultClient(ctx, sheets.SpreadsheetsReadonlyScope)
@@ -117,7 +141,6 @@ func getScopeFromSecretManager(ctx context.Context, projectID string) (string, e
 	return string(result.Payload.Data), nil
 }
 
-
 // DispatchSheetDataToWorkflows is an HTTP Cloud Function that reads a Google Sheet
 // and triggers a Google Workflow for each chunk of data.
 func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
@@ -145,11 +168,11 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 	headerRow := resp.Values[0]
 	dataRows := resp.Values[1:]
 	var wg sync.WaitGroup
-	
+
 	// Determine the number of chunks to process
 	totalRows := len(dataRows)
 	numChunks := (totalRows + chunkSize - 1) / chunkSize
-	
+
 	// In 'Test' mode, limit the number of batches
 	if scope == "Test" && numChunks > maxTestBatches {
 		numChunks = maxTestBatches
@@ -167,7 +190,7 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		if end > totalRows {
 			end = totalRows
 		}
-		
+
 		// If start is past the end, we've processed all we need to.
 		if start >= end {
 			break
