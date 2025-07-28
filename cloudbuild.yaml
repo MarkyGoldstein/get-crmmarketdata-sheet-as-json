@@ -1,7 +1,7 @@
 # cloudbuild.yaml
 # This file defines the continuous integration and deployment pipeline for the Go application.
 # It builds a Docker container using a multi-stage Dockerfile and pushes it to Google Artifact Registry.
-# This configuration is set to run the build and store the image in the Zurich, Switzerland region.
+# This configuration stores the final image in the Zurich, Switzerland region.
 
 steps:
   # 1. Build and tag the Docker container image
@@ -29,7 +29,7 @@ images:
   - '${_GCP_LOCATION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE_NAME}:$SHORT_SHA'
 
 # Define substitution variables. These allow for dynamic configuration at build time.
-# _GCP_LOCATION is now set to the Zurich region.
+# _GCP_LOCATION is set to the Zurich region to ensure the image is stored there.
 substitutions:
   _GCP_LOCATION: 'europe-west6'
   _REPOSITORY: 'cloud-run-source-deploy'
@@ -38,5 +38,3 @@ substitutions:
 options:
   # Set the logging mode.
   logging: CLOUD_LOGGING_ONLY
-  # Explicitly set the region where the build job itself will run.
-  region: 'europe-west6'
