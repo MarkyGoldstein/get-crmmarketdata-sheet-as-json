@@ -51,5 +51,5 @@ substitutions:
   _IMAGE_NAME: 'go-workflow-dispatcher'
 
 options:
-  # Set the logging mode. STRUCTURED provides more detailed and queryable logs.
-  logging: STRUCTURED
+  # Set the logging mode. CLOUD_LOGGING_ONLY sends structured logs to Cloud Logging.
+  logging: CLOUD_LOGGING_ONLY
