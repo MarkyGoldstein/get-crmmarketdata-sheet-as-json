@@ -30,15 +30,16 @@ var (
 	scope               string // Holds the execution scope ('Test' or 'Prod')
 	chunkSize           int    // Number of rows per workflow execution
 	maxTestBatches      = 2    // Maximum number of batches to process in 'Test' mode
+
+	// A sync.Once will ensure our initialization logic runs exactly once.
+	initOnce sync.Once
+	initErr  error // To store any error that occurs during initialization.
 )
 
 // main is the entry point for the application. It sets up the HTTP server.
-// This is required for 2nd Gen Cloud Functions / Cloud Run.
 func main() {
-	// The init() function will be called automatically before main().
-
-	// Register the HTTP handler function.
-	http.HandleFunc("/", DispatchSheetDataToWorkflows)
+	// Register the HTTP handler function. We wrap it to ensure initialization runs first.
+	http.HandleFunc("/", safeHandler(DispatchSheetDataToWorkflows))
 
 	// Determine port for HTTP service.
 	port := os.Getenv("PORT")
@@ -50,32 +51,53 @@ func main() {
 	// Start HTTP server.
 	log.Printf("Listening on port %s", port)
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatal(err)
+		log.Fatalf("Failed to start server: %v", err)
 	}
 }
 
-// init runs once per function instance, initializing clients and configuration.
-func init() {
+// safeHandler wraps an http.HandlerFunc to ensure initialization is performed
+// safely before the actual handler is called.
+func safeHandler(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// initOnce.Do will call initialize() only on the very first request.
+		// Subsequent calls will do nothing.
+		initOnce.Do(initialize)
+
+		// If initialization failed, return an internal server error.
+		if initErr != nil {
+			log.Printf("Initialization failed: %v", initErr)
+			http.Error(w, "Internal Server Error: could not initialize service", http.StatusInternalServerError)
+			return
+		}
+
+		// If initialization was successful, call the actual handler.
+		h(w, r)
+	}
+}
+
+// initialize contains the logic that was previously in the init() function.
+// It sets up all clients and configurations.
+func initialize() {
 	ctx := context.Background()
 	var err error
 
-	// 1. Get Project ID from environment variables, as it's needed for multiple clients.
+	// 1. Get Project ID from environment variables.
 	projectID := os.Getenv("GCP_PROJECT_ID")
 	if projectID == "" {
-		log.Fatalf("Missing required environment variable: GCP_PROJECT_ID")
+		initErr = fmt.Errorf("missing required environment variable: GCP_PROJECT_ID")
+		return
 	}
 
 	// 2. Initialize Secret Manager Client
 	secretManagerClient, err = secretmanager.NewClient(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create Secret Manager client: %v", err)
+		initErr = fmt.Errorf("failed to create Secret Manager client: %w", err)
+		return
 	}
 
 	// 3. Fetch the SCOPE from Secret Manager
 	scope, err = getScopeFromSecretManager(ctx, projectID)
 	if err != nil {
-		// In a serverless environment, failing to get the scope might be critical.
-		// However, we can also default to a safe mode. Here, we'll default to "Test".
 		log.Printf("Warning: Failed to retrieve SCOPE from Secret Manager: %v. Defaulting to 'Test' mode.", err)
 		scope = "Test"
 	}
@@ -92,26 +114,31 @@ func init() {
 	// 5. Initialize Google Sheets Client
 	sheetsHTTPClient, err := google.DefaultClient(ctx, sheets.SpreadsheetsReadonlyScope)
 	if err != nil {
-		log.Fatalf("Unable to create Google Default Client for Sheets: %v", err)
+		initErr = fmt.Errorf("unable to create Google Default Client for Sheets: %w", err)
+		return
 	}
 	sheetsService, err = sheets.NewService(ctx, option.WithHTTPClient(sheetsHTTPClient))
 	if err != nil {
-		log.Fatalf("Unable to retrieve Sheets client: %v", err)
+		initErr = fmt.Errorf("unable to retrieve Sheets client: %w", err)
+		return
 	}
 
 	// 6. Initialize Google Workflows Executions Client
 	workflowsClient, err = workflows.NewClient(ctx)
 	if err != nil {
-		log.Fatalf("Failed to create Workflows Executions client: %v", err)
+		initErr = fmt.Errorf("failed to create Workflows Executions client: %w", err)
+		return
 	}
 
 	// 7. Get and validate environment variables for the workflow
 	location := os.Getenv("GCP_LOCATION")
 	workflowName := os.Getenv("WORKFLOW_NAME")
 	if location == "" || workflowName == "" {
-		log.Fatalf("Missing required environment variables: GCP_LOCATION, WORKFLOW_NAME")
+		initErr = fmt.Errorf("missing required environment variables: GCP_LOCATION, WORKFLOW_NAME")
+		return
 	}
 	workflowParent = fmt.Sprintf("projects/%s/locations/%s/workflows/%s", projectID, location, workflowName)
+	log.Println("Initialization successful.")
 }
 
 // getScopeFromSecretManager fetches the latest version of the 'SCOPE' secret.
@@ -121,23 +148,14 @@ func getScopeFromSecretManager(ctx context.Context, projectID string) (string, e
 		return "", fmt.Errorf("environment variable SCOPE_SECRET_NAME is not set")
 	}
 
-	// Build the resource name of the secret version.
-	// Using "latest" is convenient for automatically picking up new versions.
 	versionName := fmt.Sprintf("projects/%s/secrets/%s/versions/latest", projectID, secretName)
+	req := &secretmanagerpb.AccessSecretVersionRequest{Name: versionName}
 
-	// Create the request to access the secret version.
-	req := &secretmanagerpb.AccessSecretVersionRequest{
-		Name: versionName,
-	}
-
-	// Call the API.
 	result, err := secretManagerClient.AccessSecretVersion(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("failed to access secret version: %w", err)
 	}
 
-	// The secret payload is returned as a byte slice.
-	// We convert it to a string, assuming it's simple text ('Test' or 'Prod').
 	return string(result.Payload.Data), nil
 }
 
@@ -186,20 +204,14 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		start := i * chunkSize
 		end := start + chunkSize
 
-		// Ensure we don't go out of bounds, especially for the last chunk or in test mode.
 		if end > totalRows {
 			end = totalRows
 		}
-
-		// If start is past the end, we've processed all we need to.
 		if start >= end {
 			break
 		}
 
 		chunk := dataRows[start:end]
-
-		// The payload for the workflow must mimic the structure of the original http.get call.
-		// The workflow expects a `body` field containing the sheet data.
 		workflowPayload := map[string]interface{}{
 			"body": map[string]interface{}{
 				"valueRanges": []map[string]interface{}{
@@ -210,7 +222,6 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 			},
 		}
 
-		// Marshal the payload into a JSON string for the workflow argument.
 		args, err := json.Marshal(workflowPayload)
 		if err != nil {
 			log.Printf("Failed to marshal chunk %d: %v", i, err)
@@ -222,10 +233,8 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		go func(chunkNum int, arguments string) {
 			defer wg.Done()
 			req := &executionspb.CreateExecutionRequest{
-				Parent: workflowParent,
-				Execution: &executionspb.Execution{
-					Argument: arguments,
-				},
+				Parent:    workflowParent,
+				Execution: &executionspb.Execution{Argument: arguments},
 			}
 			_, err := workflowsClient.CreateExecution(r.Context(), req)
 			if err != nil {
