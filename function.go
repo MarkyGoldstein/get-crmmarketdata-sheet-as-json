@@ -211,11 +211,14 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 
 		chunk := dataRows[start:end]
 		workflowPayload := map[string]interface{}{
-			"body": map[string]interface{}{
-				"valueRanges": []map[string]interface{}{
-					{
-						"values": append([][]interface{}{headerRow}, chunk...),
+			"body": map[string]interface{}{ // Wrap the data within a "body" key
+				"valueRanges": []interface{}{
+					map[string]interface{}{
+						"values": [][]interface{}{}, // Initialize the values array
 					},
+				},
+			},
+		}
 				},
 			},
 		}
