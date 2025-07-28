@@ -215,7 +215,7 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 				"valueRanges": []map[string]interface{}{
 					{
 						"values": append([][]interface{}{headerRow}, chunk...),
-					}
+					},
 				},
 			},
 		}
