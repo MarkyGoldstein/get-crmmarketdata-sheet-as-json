@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
@@ -157,6 +158,34 @@ func getScopeFromSecretManager(ctx context.Context, projectID string) (string, e
 	return string(result.Payload.Data), nil
 }
 
+// validateHeader checks if the required columns are present in the header row.
+// It logs a warning if mandatory columns are missing.
+func validateHeader(headerRow []interface{}) {
+	// Define which columns are mandatory.
+	mandatoryColumns := []string{"ID", "Company_Name"}
+
+	// Create a set for efficient lookup of existing header columns.
+	headerSet := make(map[string]bool)
+	for _, col := range headerRow {
+		if colStr, ok := col.(string); ok {
+			headerSet[colStr] = true
+		}
+	}
+
+	// Check for missing mandatory columns.
+	var missingMandatory []string
+	for _, mCol := range mandatoryColumns {
+		if !headerSet[mCol] {
+			missingMandatory = append(missingMandatory, mCol)
+		}
+	}
+
+	// If any mandatory columns are missing, log a warning.
+	if len(missingMandatory) > 0 {
+		log.Printf("Warning: The following mandatory header columns are missing from the sheet: %s", strings.Join(missingMandatory, ", "))
+	}
+}
+
 // DispatchSheetDataToWorkflows is an HTTP Cloud Function that reads a Google Sheet
 // and triggers a Google Workflow for each chunk of data.
 func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
@@ -182,6 +211,9 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 	}
 
 	headerRow := resp.Values[0]
+	// **NEW**: Validate the header for required columns.
+	validateHeader(headerRow)
+
 	dataRows := resp.Values[1:]
 	var wg sync.WaitGroup
 
@@ -211,8 +243,7 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 
 		chunk := dataRows[start:end]
 
-		// **MODIFIED**: Create a new slice for the payload that includes the header row.
-		// The capacity is set to len(chunk) + 1 for efficiency.
+		// Create a new slice for the payload that includes the header row.
 		payloadRows := make([][]interface{}, 0, len(chunk)+1)
 		payloadRows = append(payloadRows, headerRow)
 		payloadRows = append(payloadRows, chunk...)
@@ -255,12 +286,13 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 	close(executionErrors)
 
 	// Report the outcome
-	if len(executionErrors) > 0 {
-		var errorMessages []string
-		for err := range executionErrors {
-			errorMessages = append(errorMessages, err.Error())
-		}
-		log.Printf("Completed with %d errors: %v", len(executionErrors), errorMessages)
+	var errorMessages []string
+	for err := range executionErrors {
+		errorMessages = append(errorMessages, err.Error())
+	}
+
+	if len(errorMessages) > 0 {
+		log.Printf("Completed with %d errors: %v", len(errorMessages), errorMessages)
 		http.Error(w, fmt.Sprintf("Completed with %d errors.", len(errorMessages)), http.StatusInternalServerError)
 		return
 	}
