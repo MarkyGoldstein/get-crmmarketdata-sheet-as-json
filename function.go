@@ -1,7 +1,5 @@
-// Package p contains a Google Cloud Function that fetches data from a Google Sheet
-// and dispatches it in chunks to a Google Workflow. It dynamically adjusts its
-// processing load based on a 'SCOPE' variable from Secret Manager.
-package p
+// An executable application must be in package main.
+package main
 
 import (
 	"context"
