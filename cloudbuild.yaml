@@ -33,7 +33,7 @@ images:
 substitutions:
   _GCP_LOCATION: 'europe-west6'
   _REPOSITORY: 'cloud-run-source-deploy'
-  _IMAGE_NAME: 'go-workflow-dispatcher'
+  _IMAGE_NAME: 'get-crmmarketdata-sheet-as-json'
 
 options:
   # Set the logging mode.
