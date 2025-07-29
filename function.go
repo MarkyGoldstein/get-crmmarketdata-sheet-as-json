@@ -177,7 +177,7 @@ func validateHeader(headerRow []interface{}) {
 		}
 	}
 
-	// NEW: Log all detected column names for debugging purposes.
+	// Log all detected column names for debugging purposes.
 	detectedColumns := make([]string, 0, len(headerSet))
 	for colName := range headerSet {
 		detectedColumns = append(detectedColumns, colName)
@@ -209,9 +209,14 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Attempting to open Google Sheet ID: %s, Name: %s", spreadsheetID, sheetName)
-	// Fetch all data from the sheet
-	resp, err := sheetsService.Spreadsheets.Values.Get(spreadsheetID, sheetName).Do()
+	// Define the range explicitly to ensure we capture all data from the very first cell,
+	// avoiding issues with frozen rows. "SheetName!A1:ZZ" tells the API to get
+	// all columns from A to ZZ starting from row 1.
+	readRange := fmt.Sprintf("%s!A1:ZZ", sheetName)
+	log.Printf("Attempting to open Google Sheet ID: %s, with explicit range: %s", spreadsheetID, readRange)
+
+	// Fetch all data from the sheet using the explicit range.
+	resp, err := sheetsService.Spreadsheets.Values.Get(spreadsheetID, readRange).Do()
 	if err != nil {
 		// Log a detailed warning if the sheet could not be opened/read.
 		log.Printf("Error: Unable to retrieve data from sheet ID '%s', Name '%s'. Error: %v", spreadsheetID, sheetName, err)
