@@ -159,7 +159,6 @@ func getScopeFromSecretManager(ctx context.Context, projectID string) (string, e
 }
 
 // validateHeader checks if the required columns are present in the header row.
-// It logs a warning if mandatory columns are missing.
 func validateHeader(headerRow []interface{}) {
 	// Define which columns are mandatory.
 	mandatoryColumns := []string{"ID", "Company_Name"}
@@ -167,14 +166,23 @@ func validateHeader(headerRow []interface{}) {
 	// Create a set for efficient lookup of existing header columns.
 	headerSet := make(map[string]bool)
 
-	// This new loop safely converts any cell type (number, text, etc.)
+	// This loop safely converts any cell type (number, text, etc.)
 	// to a string and trims whitespace for a reliable comparison.
 	for _, col := range headerRow {
 		if col != nil {
 			colStr := strings.TrimSpace(fmt.Sprint(col))
-			headerSet[colStr] = true
+			if colStr != "" { // Avoid adding empty headers
+				headerSet[colStr] = true
+			}
 		}
 	}
+
+	// NEW: Log all detected column names for debugging purposes.
+	detectedColumns := make([]string, 0, len(headerSet))
+	for colName := range headerSet {
+		detectedColumns = append(detectedColumns, colName)
+	}
+	log.Printf("🔎 Detected header columns: [%s]", strings.Join(detectedColumns, ", "))
 
 	// Check for missing mandatory columns.
 	var missingMandatory []string
@@ -186,7 +194,7 @@ func validateHeader(headerRow []interface{}) {
 
 	// If any mandatory columns are missing, log a warning.
 	if len(missingMandatory) > 0 {
-		log.Printf("Warning: The following mandatory header columns are missing from the sheet: %s", strings.Join(missingMandatory, ", "))
+		log.Printf("⚠️ Warning: The following mandatory header columns are missing from the sheet: %s", strings.Join(missingMandatory, ", "))
 	}
 }
 
@@ -206,7 +214,7 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 	resp, err := sheetsService.Spreadsheets.Values.Get(spreadsheetID, sheetName).Do()
 	if err != nil {
 		// Log a detailed warning if the sheet could not be opened/read.
-		log.Printf("⚠️ Warning: Unable to retrieve data from sheet ID '%s', Name '%s'. Error: %v", spreadsheetID, sheetName, err)
+		log.Printf("Error: Unable to retrieve data from sheet ID '%s', Name '%s'. Error: %v", spreadsheetID, sheetName, err)
 		http.Error(w, "Failed to retrieve data from Google Sheet.", http.StatusInternalServerError)
 		return
 	}
