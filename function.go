@@ -177,6 +177,14 @@ func validateHeader(headerRow []interface{}) error {
 
 // DispatchSheetDataToWorkflows reads a Google Sheet and triggers workflows.
 func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
+	// *** NEW: Read the EnrichColumn header from the incoming request ***
+	enrichColumnValue := r.Header.Get("EnrichColumn")
+	if enrichColumnValue != "" {
+		log.Printf("Received 'EnrichColumn' header with value: %s", enrichColumnValue)
+	} else {
+		log.Println("No 'EnrichColumn' header found in the request.")
+	}
+
 	spreadsheetID := os.Getenv("SPREADSHEET_ID")
 	sheetName := os.Getenv("SHEET_NAME")
 	if spreadsheetID == "" || sheetName == "" {
@@ -265,7 +273,21 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		payloadRows = append(payloadRows, headerRow)
 		payloadRows = append(payloadRows, chunk...)
 
-		workflowPayload := map[string]interface{}{"body": map[string]interface{}{"valueRanges": []interface{}{map[string]interface{}{"values": payloadRows}}}}
+		// *** MODIFIED: Add the header value to the workflow payload ***
+		workflowPayload := map[string]interface{}{
+			"body": map[string]interface{}{
+				"valueRanges": []interface{}{
+					map[string]interface{}{"values": payloadRows},
+				},
+			},
+		}
+
+		// If the EnrichColumn header was present, add it to the payload.
+		// The downstream workflow can then access this via `args.enrich_column`
+		if enrichColumnValue != "" {
+			workflowPayload["enrich_column"] = enrichColumnValue
+		}
+
 		args, err := json.Marshal(workflowPayload)
 		if err != nil {
 			log.Printf("Failed to marshal chunk %d: %v", i, err)
