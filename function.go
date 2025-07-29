@@ -58,43 +58,33 @@ func main() {
 // safely before the actual handler is called.
 func safeHandler(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		// initOnce.Do will call initialize() only on the very first request.
-		// Subsequent calls will do nothing.
 		initOnce.Do(initialize)
-
-		// If initialization failed, return an internal server error.
 		if initErr != nil {
 			log.Printf("Initialization failed: %v", initErr)
 			http.Error(w, "Internal Server Error: could not initialize service", http.StatusInternalServerError)
 			return
 		}
-
-		// If initialization was successful, call the actual handler.
 		h(w, r)
 	}
 }
 
 // initialize contains the logic that was previously in the init() function.
-// It sets up all clients and configurations.
 func initialize() {
 	ctx := context.Background()
 	var err error
 
-	// 1. Get Project ID from environment variables.
 	projectID := os.Getenv("GCP_PROJECT_ID")
 	if projectID == "" {
 		initErr = fmt.Errorf("missing required environment variable: GCP_PROJECT_ID")
 		return
 	}
 
-	// 2. Initialize Secret Manager Client
 	secretManagerClient, err = secretmanager.NewClient(ctx)
 	if err != nil {
 		initErr = fmt.Errorf("failed to create Secret Manager client: %w", err)
 		return
 	}
 
-	// 3. Fetch the SCOPE from Secret Manager
 	scope, err = getScopeFromSecretManager(ctx, projectID)
 	if err != nil {
 		log.Printf("Warning: Failed to retrieve SCOPE from Secret Manager: %v. Defaulting to 'Test' mode.", err)
@@ -102,7 +92,6 @@ func initialize() {
 	}
 	log.Printf("Running in SCOPE: %s", scope)
 
-	// 4. Configure chunk size based on the scope
 	if scope == "Test" {
 		chunkSize = 5
 	} else {
@@ -110,7 +99,6 @@ func initialize() {
 	}
 	log.Printf("Using chunk size: %d", chunkSize)
 
-	// 5. Initialize Google Sheets Client
 	sheetsHTTPClient, err := google.DefaultClient(ctx, sheets.SpreadsheetsReadonlyScope)
 	if err != nil {
 		initErr = fmt.Errorf("unable to create Google Default Client for Sheets: %w", err)
@@ -122,14 +110,12 @@ func initialize() {
 		return
 	}
 
-	// 6. Initialize Google Workflows Executions Client
 	workflowsClient, err = workflows.NewClient(ctx)
 	if err != nil {
 		initErr = fmt.Errorf("failed to create Workflows Executions client: %w", err)
 		return
 	}
 
-	// 7. Get and validate environment variables for the workflow
 	location := os.Getenv("GCP_LOCATION")
 	workflowName := os.Getenv("WORKFLOW_NAME")
 	if location == "" || workflowName == "" {
@@ -140,13 +126,12 @@ func initialize() {
 	log.Println("Initialization successful.")
 }
 
-// getScopeFromSecretManager fetches the latest version of the 'SCOPE' secret.
+// getScopeFromSecretManager fetches the 'SCOPE' secret.
 func getScopeFromSecretManager(ctx context.Context, projectID string) (string, error) {
 	secretName := os.Getenv("SCOPE_SECRET_NAME")
 	if secretName == "" {
 		return "", fmt.Errorf("environment variable SCOPE_SECRET_NAME is not set")
 	}
-
 	versionName := fmt.Sprintf("projects/%s/secrets/%s/versions/latest", projectID, secretName)
 	req := &secretmanagerpb.AccessSecretVersionRequest{Name: versionName}
 
@@ -154,37 +139,29 @@ func getScopeFromSecretManager(ctx context.Context, projectID string) (string, e
 	if err != nil {
 		return "", fmt.Errorf("failed to access secret version: %w", err)
 	}
-
 	return string(result.Payload.Data), nil
 }
 
-// validateHeader checks if the required columns are present in the header row.
-func validateHeader(headerRow []interface{}) {
-	// Define which columns are mandatory.
+// validateHeader robustly checks the header row and returns an error if validation fails.
+func validateHeader(headerRow []interface{}) error {
 	mandatoryColumns := []string{"ID", "Company_Name"}
-
-	// Create a set for efficient lookup of existing header columns.
 	headerSet := make(map[string]bool)
 
-	// This loop safely converts any cell type (number, text, etc.)
-	// to a string and trims whitespace for a reliable comparison.
 	for _, col := range headerRow {
 		if col != nil {
 			colStr := strings.TrimSpace(fmt.Sprint(col))
-			if colStr != "" { // Avoid adding empty headers
+			if colStr != "" {
 				headerSet[colStr] = true
 			}
 		}
 	}
 
-	// Log all detected column names for debugging purposes.
 	detectedColumns := make([]string, 0, len(headerSet))
 	for colName := range headerSet {
 		detectedColumns = append(detectedColumns, colName)
 	}
 	log.Printf("🔎 Detected header columns: [%s]", strings.Join(detectedColumns, ", "))
 
-	// Check for missing mandatory columns.
 	var missingMandatory []string
 	for _, mCol := range mandatoryColumns {
 		if !headerSet[mCol] {
@@ -192,16 +169,14 @@ func validateHeader(headerRow []interface{}) {
 		}
 	}
 
-	// If any mandatory columns are missing, log a warning.
 	if len(missingMandatory) > 0 {
-		log.Printf("⚠️ Warning: The following mandatory header columns are missing from the sheet: %s", strings.Join(missingMandatory, ", "))
+		return fmt.Errorf("the header row is missing mandatory columns: [%s]", strings.Join(missingMandatory, ", "))
 	}
+	return nil // Success
 }
 
-// DispatchSheetDataToWorkflows is an HTTP Cloud Function that reads a Google Sheet
-// and triggers a Google Workflow for each chunk of data.
+// DispatchSheetDataToWorkflows reads a Google Sheet and triggers workflows.
 func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
-	// Get sheet configuration from environment variables
 	spreadsheetID := os.Getenv("SPREADSHEET_ID")
 	sheetName := os.Getenv("SHEET_NAME")
 	if spreadsheetID == "" || sheetName == "" {
@@ -209,40 +184,65 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Define the range explicitly to ensure we capture all data from the very first cell,
-	// avoiding issues with frozen rows. "SheetName!A1:ZZ" tells the API to get
-	// all columns from A to ZZ starting from row 1.
-	readRange := fmt.Sprintf("%s!A1:ZZ", sheetName)
-	log.Printf("Attempting to open Google Sheet ID: %s, with explicit range: %s", spreadsheetID, readRange)
+	readRange := fmt.Sprintf("%s!A:ZZ", sheetName)
+	log.Printf("Attempting to read data from sheet '%s' with range '%s'", spreadsheetID, readRange)
 
-	// Fetch all data from the sheet using the explicit range.
 	resp, err := sheetsService.Spreadsheets.Values.Get(spreadsheetID, readRange).Do()
 	if err != nil {
-		// Log a detailed warning if the sheet could not be opened/read.
-		log.Printf("Error: Unable to retrieve data from sheet ID '%s', Name '%s'. Error: %v", spreadsheetID, sheetName, err)
+		log.Printf("Error: Unable to retrieve data from sheet. Error: %v", err)
 		http.Error(w, "Failed to retrieve data from Google Sheet.", http.StatusInternalServerError)
 		return
 	}
-	// Log a confirmation message upon successful access.
-	log.Printf("✅ Successfully opened and read data from Google Sheet ID: %s, Name: %s. Found %d total rows.", spreadsheetID, sheetName, len(resp.Values))
+	log.Printf("✅ Successfully read %d rows from sheet.", len(resp.Values))
 
-	if len(resp.Values) <= 1 { // No data or only a header row
-		log.Println("No data rows to process.")
-		fmt.Fprintln(w, "No data rows to process.")
+	if len(resp.Values) == 0 {
+		log.Println("Sheet is empty. No data to process.")
+		fmt.Fprintln(w, "Sheet is empty, no action taken.")
 		return
 	}
 
-	headerRow := resp.Values[0]
-	validateHeader(headerRow)
+	var headerRow []interface{}
+	var dataRows [][]interface{}
+	headerIndex := -1
 
-	dataRows := resp.Values[1:]
+	// Find the first non-empty row to ensure it's the header.
+	for i, row := range resp.Values {
+		// A row is considered non-empty if it has at least one cell with content.
+		if len(row) > 0 {
+			headerRow = row
+			headerIndex = i
+			break
+		}
+	}
+
+	if headerIndex == -1 {
+		log.Println("Sheet contains only empty rows. No data to process.")
+		fmt.Fprintln(w, "Sheet contains only empty rows, no action taken.")
+		return
+	}
+
+	log.Printf("Header row identified at sheet row %d.", headerIndex+1)
+	dataRows = resp.Values[headerIndex+1:]
+
+	// Validate the header and FAIL FAST if it's invalid.
+	if err := validateHeader(headerRow); err != nil {
+		log.Printf("❌ Header validation failed: %v", err)
+		http.Error(w, "Header validation failed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	log.Println("✅ Header validation successful.")
+	if len(dataRows) == 0 {
+		log.Println("No data rows found after the header. No action taken.")
+		fmt.Fprintln(w, "No data rows found after the header.")
+		return
+	}
+	log.Printf("Found %d data rows to process.", len(dataRows))
+
 	var wg sync.WaitGroup
-
-	// Determine the number of chunks to process
 	totalRows := len(dataRows)
 	numChunks := (totalRows + chunkSize - 1) / chunkSize
 
-	// In 'Test' mode, limit the number of batches
 	if scope == "Test" && numChunks > maxTestBatches {
 		numChunks = maxTestBatches
 		log.Printf("In 'Test' scope, processing a maximum of %d batches.", maxTestBatches)
@@ -250,35 +250,22 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 
 	executionErrors := make(chan error, numChunks)
 
-	// Process rows in chunks
 	for i := 0; i < numChunks; i++ {
 		start := i * chunkSize
 		end := start + chunkSize
-
 		if end > totalRows {
 			end = totalRows
 		}
 		if start >= end {
 			break
 		}
-
 		chunk := dataRows[start:end]
 
-		// Create a new slice for the payload that includes the header row.
 		payloadRows := make([][]interface{}, 0, len(chunk)+1)
 		payloadRows = append(payloadRows, headerRow)
 		payloadRows = append(payloadRows, chunk...)
 
-		workflowPayload := map[string]interface{}{
-			"body": map[string]interface{}{
-				"valueRanges": []interface{}{
-					map[string]interface{}{
-						"values": payloadRows, // Use the slice that includes the header
-					},
-				},
-			},
-		}
-
+		workflowPayload := map[string]interface{}{"body": map[string]interface{}{"valueRanges": []interface{}{map[string]interface{}{"values": payloadRows}}}}
 		args, err := json.Marshal(workflowPayload)
 		if err != nil {
 			log.Printf("Failed to marshal chunk %d: %v", i, err)
@@ -289,10 +276,7 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func(chunkNum int, arguments string) {
 			defer wg.Done()
-			req := &executionspb.CreateExecutionRequest{
-				Parent:    workflowParent,
-				Execution: &executionspb.Execution{Argument: arguments},
-			}
+			req := &executionspb.CreateExecutionRequest{Parent: workflowParent, Execution: &executionspb.Execution{Argument: arguments}}
 			_, err := workflowsClient.CreateExecution(r.Context(), req)
 			if err != nil {
 				log.Printf("Failed to execute workflow for chunk %d: %v", chunkNum, err)
@@ -306,7 +290,6 @@ func DispatchSheetDataToWorkflows(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 	close(executionErrors)
 
-	// Report the outcome
 	var errorMessages []string
 	for err := range executionErrors {
 		errorMessages = append(errorMessages, err.Error())
